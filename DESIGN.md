@@ -74,7 +74,7 @@ erDiagram
         uuid id PK
         text name
         text lender "nullable, ej. persona, tarjeta, etc."
-        text kind "persona | tarjeta | banco | otro"
+        text kind "persona | tarjeta | banco | otro — solo 'persona' se usa/expone en v1"
         numeric current_balance "derivado: suma de advances - suma de payments"
         numeric interest_rate "nullable, sobre todo para deudas formales"
         int reminder_day "nullable, ej. 30 — solo un recordatorio, no cierra nada"
@@ -98,6 +98,28 @@ Notas sobre el modelo:
 - **`DEBTS` cambió de "un préstamo por ciclo" a "una cuenta corriente por acreedor" (v2 del modelo):** contándome cómo le pides prestado a Andrés — varias veces en la misma semana, y a fin de mes a veces le cancelas todo y a veces queda un resto — quedó claro que un préstamo por persona no es un evento aislado, es un saldo que sube y baja. Por eso `DEBTS` ahora representa la relación con un acreedor (una fila por persona/tarjeta/banco, que normalmente no se "cierra"), y `DEBT_MOVEMENTS` reemplaza a `DEBT_PAYMENTS`: cada fila es o un `advance` (te prestan más → sube el saldo) o un `payment` (abonas → baja el saldo). `debts.current_balance` es la suma de esos movimientos — se recalcula o se cachea cada vez que se inserta uno. El saldo puede seguir positivo de un mes a otro sin ningún problema; no hay "cierre de ciclo".
 - `debts.reminder_day` reemplaza a lo que antes era `is_monthly_cycle` + `due_date`: ya no representa el vencimiento de un préstamo específico (porque el préstamo ya no es un evento con final), sino un simple recordatorio de "sueles pagarle a esta persona cerca de este día". Es informativo, no bloquea ni cierra nada.
 - Con este cambio, `debts.original_amount` y `monthly_payment` de la v1 del modelo ya no aplican igual: el "monto original" no tiene mucho sentido cuando hay múltiples préstamos acumulados, y la "cuota mensual" pasa a ser simplemente el próximo `payment` que registres. Si en el futuro se necesita una cuota fija obligatoria (por ejemplo para la tarjeta de crédito), se puede agregar como un campo aparte sin afectar el resto.
+- **Ajuste de alcance (21 ago 2026): en v1 las deudas son solo préstamos de persona a persona.** Juan por ahora solo pide prestado a personas (no tarjetas de crédito ni bancos), así que el formulario de "Nueva deuda" no debe mostrar un selector de `kind` — se guarda directamente como `'persona'`. El campo `kind` se queda en el modelo tal cual (con sus otros valores posibles) para no tener que migrar nada cuando en el futuro se quiera registrar una tarjeta o un banco, pero esa parte de la interfaz no se construye todavía.
+- **Archivado automático al saldar una deuda:** cuando un `payment` hace que `current_balance` llegue exactamente a 0, la deuda debe pasar automáticamente a `status = 'archived'` (no hace falta que Juan la archive a mano) y desaparecer de la lista principal de Deudas y del cálculo de "Deuda total pendiente". Sigue existiendo en la base de datos por su historial, simplemente ya no se muestra como activa. Es un buen gesto de UX mostrar un mensaje breve al momento de guardar el abono que la salda (ej. "Deuda con Andrés saldada ✓") para que quede claro qué pasó, en vez de que la tarjeta desaparezca sin explicación.
+
+## 4.1 Regla de saldo disponible (cambio de modelo, 21 ago 2026)
+
+Ajuste importante sobre cómo se relacionan `transactions` y `debt_movements`: en vez de tratarlos como dos flujos completamente separados, la app debe llevar un **saldo disponible único** que ambos alimentan, porque así es como Juan lo vive en la práctica — cuando alguien le presta plata, esa plata sí queda disponible para gastar, igual que su propio dinero, hasta que la devuelve.
+
+**Fórmula del saldo disponible:**
+
+```
+saldo_disponible = Σ(accounts.initial_balance)
+                  + Σ(transactions donde type = 'income')
+                  − Σ(transactions donde type = 'expense')
+                  + Σ(debt_movements donde type = 'advance')
+                  − Σ(debt_movements donde type = 'payment')
+```
+
+Es un saldo total, no separado por cuenta — más adelante podría desglosarse por cuenta si hace falta, pero no es necesario para el MVP.
+
+**Regla de validación al registrar un egreso:** si el monto de una transacción tipo `expense` es mayor al `saldo_disponible` actual, la app no debe permitir guardarla. En su lugar, debe mostrar un mensaje claro (ej. "No tienes saldo suficiente — saldo actual: $X") con un atajo directo para ir a Deudas → "Pedir más" (o, idealmente, un mini-formulario inline para registrar el préstamo sin salir de la pantalla) y luego continuar con el gasto. Los ingresos (`income`) y los movimientos de deuda (`advance`/`payment`) no tienen esta restricción — siempre se pueden registrar.
+
+**Qué cambia respecto a antes:** el tile "Balance disponible hoy" del Dashboard (sección 6) ahora se calcula con esta misma fórmula (saldo disponible total), en vez de "ingresos − egresos − pagos de deuda del mes". La diferencia es que ahora los `advance` de deuda sí suman al saldo disponible (porque es plata que puedes gastar), mientras que "Ingresos del mes" (el otro tile) sigue mostrando solo ingresos reales — un préstamo nunca cuenta como ingreso, solo como saldo disponible temporal que hay que devolver. Esta distinción es intencional: te deja ver de un vistazo tanto cuánta plata tienes para gastar ahora mismo (saldo disponible, incluye préstamos) como cuánto generaste de verdad este mes (ingresos, no incluye préstamos).
 
 ## 5. Arquitectura técnica propuesta
 
@@ -120,6 +142,52 @@ Notas sobre el modelo:
 - **Tailwind CSS**: estilos rápidos y consistentes sin escribir CSS desde cero, y es "mobile-first" por diseño — encaja bien con el requisito de responsive.
 - **Recharts**: gráficos de barras/líneas para el dashboard (ingresos vs. egresos), usados con mesura — ver sección 6 sobre por qué el resumen del mes no es una gráfica de línea.
 - **Responsive:** un mismo layout que se adapta con Tailwind — en escritorio, barra lateral fija con la navegación; en celular, la barra lateral se colapsa en una barra de navegación inferior (más natural para el pulgar) y las tarjetas pasan de estar en fila a apilarse verticalmente. No se construyen dos apps distintas, es el mismo código adaptado por breakpoint.
+
+## 5.1 Sistema visual (tokens de diseño)
+
+Esto es lo que faltaba conectar con el proyecto real: los wireframes definieron un estilo concreto (oscuro, cálido, con tipografías específicas), pero esa información nunca quedó escrita en este documento — vivía solo dentro de los archivos del lienzo de diseño. Por eso el primer CRUD generado salió con estilos por defecto del navegador en vez del diseño acordado. Esta sección es la fuente de verdad para que cualquier pantalla nueva (o las que ya existen) se vea igual que los wireframes.
+
+**Tipografías** (Google Fonts):
+- Encabezados y cifras destacadas: `Space Grotesk` (pesos 500/600/700).
+- Texto general: `Karla` (pesos 400/500/600/700).
+- Import: `https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Karla:wght@400;500;600;700&display=swap`
+
+**Colores** (definidos como variables CSS en `oklch`, tema oscuro cálido):
+
+```css
+:root {
+  --bg: oklch(0.17 0.014 55);
+  --bg-elevated: oklch(0.215 0.016 55);
+  --bg-elevated-2: oklch(0.26 0.018 55);
+  --bg-elevated-3: oklch(0.30 0.018 55);
+  --border: oklch(0.33 0.016 55);
+  --border-soft: oklch(0.28 0.016 55);
+  --text: oklch(0.95 0.008 55);
+  --text-muted: oklch(0.72 0.02 55);
+  --text-faint: oklch(0.56 0.02 55);
+  --accent: oklch(0.74 0.14 50);
+  --accent-strong: oklch(0.68 0.16 46);
+  --income: oklch(0.74 0.13 150);
+  --income-bg: oklch(0.74 0.13 150 / 0.16);
+  --expense: oklch(0.70 0.17 25);
+  --expense-bg: oklch(0.70 0.17 25 / 0.16);
+  --warn: oklch(0.80 0.15 85);
+  --cat-food: oklch(0.72 0.12 195);
+  --cat-transport: oklch(0.72 0.12 290);
+}
+```
+
+Uso de cada color: `--bg` es el fondo general de la página; `--bg-elevated` es el fondo de tarjetas y del sidebar; `--bg-elevated-2` es el fondo de inputs, badges de filtro activo y sub-elementos dentro de una tarjeta; `--border`/`--border-soft` para bordes de tarjetas y separadores de filas; `--text`/`--text-muted`/`--text-faint` son tres niveles de énfasis de texto (título, texto normal, texto secundario/fecha); `--accent` es el color de marca (botones primarios, ítem de navegación activo, ícono del logo); `--income` (verde) para montos e indicadores de ingreso; `--expense` (rojo/coral) para montos e indicadores de egreso y préstamos; `--income-bg`/`--expense-bg` son versiones translúcidas para fondos de badges tipo "Ingreso"/"Egreso"; `--cat-food`, `--cat-transport` y similares son colores por categoría (para los puntos de color en listas y el donut de reportes).
+
+**Radios y espaciado:**
+- Tarjetas y contenedores principales: `border-radius: 16px`, `padding: 20–26px`, `border: 1px solid var(--border)`, fondo `var(--bg-elevated)`.
+- Inputs, selects y botones de filtro: `border-radius: 10px`, fondo `var(--bg-elevated-2)`, borde `1px solid var(--border)`, `padding: 10–12px`.
+- Ítems de navegación (sidebar/bottom bar) y pastillas de filtro pequeñas: `border-radius: 12px` (nav) u `8px` (pastillas internas).
+- Badges tipo "Ingreso"/"Egreso": `border-radius: 999px` (pill), `padding: 3px 9px`, fondo `var(--income-bg)`/`var(--expense-bg)`, texto `var(--income)`/`var(--expense)`.
+- Botón primario ("Guardar movimiento", etc.): fondo `var(--accent)`, texto oscuro (`#1a1310`) para contraste, `border-radius: 10px`, `font-weight: 700`, sin borde.
+- Botón flotante de captura rápida ("+"): círculo `56px`, fondo `var(--accent)`, `border-radius: 50%`, sombra `0 8px 20px oklch(0 0 0 / 0.35)`, posición fija esquina inferior derecha (o encima de la barra inferior en móvil).
+
+**Cómo aplicarlo en Tailwind:** definir estas variables en `globals.css` dentro de `:root`, e importar la fuente en el `<head>` (o vía `next/font`). Luego, en `tailwind.config`, extender los colores para poder usar clases como `bg-[var(--bg-elevated)]` o registrar cada token como color de Tailwind (`accent`, `income`, `expense`, etc.) apuntando a `var(--accent)`, etc., para poder escribir `bg-accent`, `text-income`, `border-border` directamente. Cualquier pantalla nueva (o las ya construidas) debe usar estas variables en vez de colores de Tailwind por defecto (`gray-800`, `blue-500`, etc.) o los estilos nativos del navegador.
 
 ## 6. Pantallas (v1)
 
@@ -175,5 +243,3 @@ Todos los puntos abiertos ya se resolvieron (20 ago 2026). El alcance de la Fase
 3. Crear el proyecto Next.js + Supabase y aplicar el esquema de la sección 4 como migración inicial.
 4. Construir en orden: esquema en Supabase → CRUD de transacciones → CRUD de deudas → Dashboard → Reportes.
 5. Usar este archivo como `CLAUDE.md`/`DESIGN.md` en la raíz del repo para que cada sesión de Claude Code arranque con el contexto completo.
-
-https://claude.ai/code/artifact/c71a8aa0-7895-45db-9119-50aa56743dc1

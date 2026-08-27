@@ -1,26 +1,51 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: oklch(0.17 0.014 55);
+  --bg-elevated: oklch(0.215 0.016 55);
+  --bg-elevated-2: oklch(0.26 0.018 55);
+  --bg-elevated-3: oklch(0.30 0.018 55);
+  --border: oklch(0.33 0.016 55);
+  --border-soft: oklch(0.28 0.016 55);
+  --text: oklch(0.95 0.008 55);
+  --text-muted: oklch(0.72 0.02 55);
+  --text-faint: oklch(0.56 0.02 55);
+  --accent: oklch(0.74 0.14 50);
+  --accent-strong: oklch(0.68 0.16 46);
+  --income: oklch(0.74 0.13 150);
+  --income-bg: oklch(0.74 0.13 150 / 0.16);
+  --expense: oklch(0.70 0.17 25);
+  --expense-bg: oklch(0.70 0.17 25 / 0.16);
+  --warn: oklch(0.80 0.15 85);
+  --cat-food: oklch(0.72 0.12 195);
+  --cat-transport: oklch(0.72 0.12 290);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  --color-bg: var(--bg);
+  --color-elevated: var(--bg-elevated);
+  --color-elevated-2: var(--bg-elevated-2);
+  --color-elevated-3: var(--bg-elevated-3);
+  --color-border: var(--border);
+  --color-border-soft: var(--border-soft);
+  --color-text: var(--text);
+  --color-text-muted: var(--text-muted);
+  --color-text-faint: var(--text-faint);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-income: var(--income);
+  --color-income-bg: var(--income-bg);
+  --color-expense: var(--expense);
+  --color-expense-bg: var(--expense-bg);
+  --color-warn: var(--warn);
+  --color-cat-food: var(--cat-food);
+  --color-cat-transport: var(--cat-transport);
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-heading: var(--font-space-grotesk);
+  --font-sans: var(--font-karla);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--text);
 }
